@@ -112,7 +112,7 @@ module.exports = {
             assert.equal(1, destroyed[1]);
         });
     },
-  
+
     'tests drain' : function (beforeExit) {
         var created = 0;
         var destroyed = 0;
@@ -146,6 +146,74 @@ module.exports = {
         assert.throws(function() {
             pool.acquire(function(client) {});
         }, Error);
-    }
+    },
     
+    'object removal is safe' : function (beforeExit) {
+        
+        // object that hypothetically does work
+        // in the libeio thread pool and should
+        // not be shared between threads
+        var obj = function(id) {
+           this.id = id;
+           this.count = 0;
+        }
+        
+        obj.prototype.doWork = function(callback) {
+           // this object is in use 
+           // so increment its count
+           this.count++;
+
+           // do some work
+           var that = this;
+           setTimeout(function() {
+             callback(null,that.count);
+           }, 250);
+        }
+
+        obj.prototype.cleanUp = function(callback) {
+           // cleanup takes a bit of time
+           var that = this;
+           setTimeout(function() {
+             // cleanup is done, object can now be safely reused
+             that.count--;
+             callback(null,that.count);
+           }, 250);
+        }
+        
+        var pool = poolModule.Pool({
+            name     : 'test5',
+            create   : function(callback) {
+                          callback(new obj('test'));
+                       },
+            destroy  : function(resource) {
+                          // cleanup also takes a bit of time
+                          resource.cleanUp(function(err,count){
+                              assert.equal(count,0);
+                          }); 
+                       },
+            max : 5,
+            idleTimeoutMillis : 5000,
+            log:false,
+            reapIntervalMillis: 1000
+        });
+
+        
+        // fire off requests for work which
+        // should be throttled by the pool
+        // and no single instance should be doing
+        // work at the same time
+        for (i = 0; i < 20; i++) {
+            pool.acquire(function(obj) {
+                obj.doWork(function(err,count) {
+                    // count should be 1 as only
+                    // one instance of obj should be
+                    // doing work at any time
+                    assert.equal(count,1);
+                    // work is done, release the obj
+                    pool.release(obj);
+                });
+            });
+        }
+    },
+
 };
