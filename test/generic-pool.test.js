@@ -159,6 +159,11 @@ module.exports = {
         }
         
         obj.prototype.doWork = function(callback) {
+           
+           // assert that no other thread
+           // is doing work with this instance
+           assert.equal(this.count,0);
+           
            // this object is in use 
            // so increment its count
            this.count++;
@@ -166,32 +171,20 @@ module.exports = {
            // do some work
            var that = this;
            setTimeout(function() {
+             assert.equal(that.count,1);
+             that.count--;
+             assert.equal(that.count,0);
              callback(null,that.count);
-           }, 250);
+           }, 10);
         }
 
-        obj.prototype.cleanUp = function(callback) {
-           // cleanup takes a bit of time
-           var that = this;
-           setTimeout(function() {
-             // cleanup is done, object can now be safely reused
-             that.count--;
-             callback(null,that.count);
-           }, 250);
-        }
-        
         var pool = poolModule.Pool({
             name     : 'test5',
             create   : function(callback) {
                           callback(new obj('test'));
                        },
-            destroy  : function(resource) {
-                          // cleanup also takes a bit of time
-                          resource.cleanUp(function(err,count){
-                              assert.equal(count,0);
-                          }); 
-                       },
-            max : 5,
+            destroy  : function(resource) { /*delete resource*/ },
+            max : 20,
             idleTimeoutMillis : 5000,
             log:false,
             reapIntervalMillis: 1000
@@ -202,18 +195,16 @@ module.exports = {
         // should be throttled by the pool
         // and no single instance should be doing
         // work at the same time
-        for (i = 0; i < 20; i++) {
+        for (i = 0; i < 100; i++) {
             pool.acquire(function(obj) {
                 obj.doWork(function(err,count) {
-                    // count should be 1 as only
-                    // one instance of obj should be
-                    // doing work at any time
-                    assert.equal(count,1);
                     // work is done, release the obj
+                    assert.equal(count,0);
                     pool.release(obj);
                 });
             });
         }
+
     },
 
 };
